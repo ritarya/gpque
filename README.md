@@ -1,2 +1,2 @@
 # gpque
-A GPU telemetry pipeline that reads DCGM (Data Center GPU Manager) metrics from a CSV file, streams them through a custom message queue, persists them via collectors, and exposes them through a REST API.
+A GPU telemetry pipeline built around a **custom message queue service** as its core infrastructure. Telemetry data is ingested by one or more Streamers, routed through the queue to one or more Collectors that parse and persist it, and then exposed to consumers via a REST API Gateway.
