@@ -1,0 +1,7 @@
+bin/
+*.exe
+go.sum
+*.log
+*.offsets
+data/
+.env
