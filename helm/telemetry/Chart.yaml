@@ -1,0 +1,6 @@
+apiVersion: v2
+name: telemetry
+description: GPU telemetry pipeline — message queue and streamer
+type: application
+version: 0.1.0
+appVersion: "0.1.0"

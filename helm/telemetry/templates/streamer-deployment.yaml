@@ -1,0 +1,47 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .Release.Name }}-streamer
+  labels:
+    app.kubernetes.io/managed-by: {{ .Release.Service }}
+    helm.sh/chart: {{ .Chart.Name }}-{{ .Chart.Version }}
+spec:
+  replicas: {{ .Values.streamer.replicas }}
+  selector:
+    matchLabels:
+      app: {{ .Release.Name }}-streamer
+  template:
+    metadata:
+      labels:
+        app: {{ .Release.Name }}-streamer
+    spec:
+      containers:
+        - name: streamer
+          image: gpqueue-streamer:{{ .Values.image.tag }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          env:
+            - name: STREAMER_ID
+              # Use the pod name so each replica has a unique streamer-id.
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            - name: CSV_PATH
+              value: {{ .Values.streamer.csvPath | quote }}
+            - name: PUBLISH_INTERVAL_MS
+              value: {{ .Values.streamer.publishIntervalMs | quote }}
+            - name: TOPIC_NAME
+              valueFrom:
+                configMapKeyRef:
+                  name: {{ .Release.Name }}-config
+                  key: TOPIC_NAME
+            - name: QUEUE_ADDR
+              valueFrom:
+                configMapKeyRef:
+                  name: {{ .Release.Name }}-config
+                  key: QUEUE_ADDR
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              memory: 128Mi

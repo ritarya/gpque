@@ -1,0 +1,10 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ .Release.Name }}-config
+  labels:
+    app.kubernetes.io/managed-by: {{ .Release.Service }}
+    helm.sh/chart: {{ .Chart.Name }}-{{ .Chart.Version }}
+data:
+  TOPIC_NAME: {{ .Values.streamer.topicName | quote }}
+  QUEUE_ADDR: "http://{{ .Release.Name }}-mq:{{ .Values.mq.port }}"

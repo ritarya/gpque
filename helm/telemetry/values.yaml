@@ -1,0 +1,21 @@
+# image.pullPolicy: Never tells Kubernetes to use locally built images,
+# which is correct when images are built inside minikube's Docker daemon.
+image:
+  pullPolicy: Never
+  tag: latest
+
+mq:
+  port: 8080
+  highWaterMark: 100000
+  walPath: /data/wal.log
+  maxRetries: 3
+  pollTimeoutMs: 5000
+  persistence:
+    storageClass: standard   # minikube default storage class
+    size: 1Gi
+
+streamer:
+  replicas: 1
+  publishIntervalMs: 100
+  topicName: telemetry
+  csvPath: /data/dcgm_metrics.csv   # bundled in image by Dockerfile.streamer

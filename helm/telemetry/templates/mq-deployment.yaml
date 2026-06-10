@@ -1,0 +1,62 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .Release.Name }}-mq
+  labels:
+    app.kubernetes.io/managed-by: {{ .Release.Service }}
+    helm.sh/chart: {{ .Chart.Name }}-{{ .Chart.Version }}
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: {{ .Release.Name }}-mq
+  template:
+    metadata:
+      labels:
+        app: {{ .Release.Name }}-mq
+    spec:
+      containers:
+        - name: mq
+          image: gpqueue-mq:{{ .Values.image.tag }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          ports:
+            - name: http
+              containerPort: {{ .Values.mq.port }}
+          env:
+            - name: MQ_PORT
+              value: {{ .Values.mq.port | quote }}
+            - name: MQ_WAL_PATH
+              value: {{ .Values.mq.walPath | quote }}
+            - name: MQ_HIGH_WATER_MARK
+              value: {{ .Values.mq.highWaterMark | quote }}
+            - name: MQ_MAX_RETRIES
+              value: {{ .Values.mq.maxRetries | quote }}
+            - name: MQ_POLL_TIMEOUT_MS
+              value: {{ .Values.mq.pollTimeoutMs | quote }}
+          volumeMounts:
+            - name: data
+              mountPath: /data
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 3
+            periodSeconds: 5
+            failureThreshold: 3
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              memory: 512Mi
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: {{ .Release.Name }}-mq-data

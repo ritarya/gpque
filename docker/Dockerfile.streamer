@@ -7,4 +7,5 @@ RUN go build -o /streamer ./cmd/streamer
 
 FROM alpine:3.20
 COPY --from=build /streamer /streamer
+COPY data/dcgm_metrics.csv /data/dcgm_metrics.csv
 ENTRYPOINT ["/streamer"]
