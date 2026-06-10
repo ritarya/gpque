@@ -1,0 +1,61 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .Release.Name }}-collector
+  labels:
+    app.kubernetes.io/managed-by: {{ .Release.Service }}
+    helm.sh/chart: {{ .Chart.Name }}-{{ .Chart.Version }}
+spec:
+  replicas: {{ .Values.collector.replicas }}
+  selector:
+    matchLabels:
+      app: {{ .Release.Name }}-collector
+  template:
+    metadata:
+      labels:
+        app: {{ .Release.Name }}-collector
+    spec:
+      containers:
+        - name: collector
+          image: gpqueue-collector:{{ .Values.image.tag }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          env:
+            - name: COLLECTOR_ID
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            - name: TOPIC_NAME
+              valueFrom:
+                configMapKeyRef:
+                  name: {{ .Release.Name }}-config
+                  key: TOPIC_NAME
+            - name: QUEUE_ADDR
+              valueFrom:
+                configMapKeyRef:
+                  name: {{ .Release.Name }}-config
+                  key: QUEUE_ADDR
+            - name: CONSUMER_GROUP
+              valueFrom:
+                configMapKeyRef:
+                  name: {{ .Release.Name }}-config
+                  key: CONSUMER_GROUP
+            - name: DB_DSN
+              valueFrom:
+                configMapKeyRef:
+                  name: {{ .Release.Name }}-config
+                  key: DB_DSN
+            - name: DLQ_TOPIC
+              valueFrom:
+                configMapKeyRef:
+                  name: {{ .Release.Name }}-config
+                  key: DLQ_TOPIC
+            - name: BATCH_SIZE
+              value: {{ .Values.collector.batchSize | quote }}
+            - name: MAX_RETRIES
+              value: {{ .Values.collector.maxRetries | quote }}
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              memory: 128Mi

@@ -19,3 +19,25 @@ streamer:
   publishIntervalMs: 100
   topicName: telemetry
   csvPath: /data/dcgm_metrics.csv   # bundled in image by Dockerfile.streamer
+
+collector:
+  replicas: 2
+  consumerGroup: telemetry-collectors
+  topicName: telemetry
+  batchSize: 50
+  maxRetries: 3
+  dlqTopic: telemetry-dlq
+
+gateway:
+  replicas: 1
+  port: 8080
+
+postgres:
+  image: timescale/timescaledb:latest-pg16
+  pullPolicy: IfNotPresent
+  user: postgres
+  password: postgres
+  database: telemetry
+  persistence:
+    storageClass: standard
+    size: 2Gi

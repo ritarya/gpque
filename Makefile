@@ -1,6 +1,7 @@
 .PHONY: build test lint tidy \
         minikube-build minikube-deploy minikube-undeploy \
-        minikube-logs-mq minikube-logs-streamer minikube-port-forward
+        minikube-logs-mq minikube-logs-streamer minikube-logs-collector minikube-logs-gateway \
+        minikube-port-forward minikube-port-forward-postgres minikube-open-gateway
 
 build:
 	go build ./cmd/...
@@ -19,8 +20,11 @@ tidy:
 # is needed.  imagePullPolicy: Never in the Helm chart uses them as-is.
 minikube-build:
 	@bash -c 'eval $$(minikube docker-env) && \
-		docker build -f docker/Dockerfile.mq      -t gpqueue-mq:latest      . && \
-		docker build -f docker/Dockerfile.streamer -t gpqueue-streamer:latest .'
+		docker build -f docker/Dockerfile.mq        -t gpqueue-mq:latest        . && \
+		docker build -f docker/Dockerfile.streamer  -t gpqueue-streamer:latest  . && \
+		docker build -f docker/Dockerfile.collector -t gpqueue-collector:latest . && \
+		docker build -f docker/Dockerfile.gateway   -t gpqueue-gateway:latest   . && \
+		docker pull timescale/timescaledb:latest-pg16'
 
 # Deploy (or upgrade) the Helm release.  Runs minikube-build first.
 minikube-deploy: minikube-build
@@ -37,6 +41,20 @@ minikube-logs-mq:
 minikube-logs-streamer:
 	kubectl logs -l app=telemetry-streamer -f --tail=50
 
+minikube-logs-collector:
+	kubectl logs -l app=telemetry-collector -f --tail=50
+
+minikube-logs-gateway:
+	kubectl logs -l app=telemetry-gateway -f --tail=50
+
 # Expose the MQ HTTP API locally at http://localhost:8080
 minikube-port-forward:
 	kubectl port-forward svc/telemetry-mq 8080:8080
+
+# Expose PostgreSQL locally at localhost:5432
+minikube-port-forward-postgres:
+	kubectl port-forward svc/telemetry-postgres 5432:5432
+
+# Open the gateway in the default browser (NodePort via minikube)
+minikube-open-gateway:
+	minikube service telemetry-gateway

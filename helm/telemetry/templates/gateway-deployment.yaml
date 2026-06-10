@@ -1,0 +1,49 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .Release.Name }}-gateway
+  labels:
+    app.kubernetes.io/managed-by: {{ .Release.Service }}
+    helm.sh/chart: {{ .Chart.Name }}-{{ .Chart.Version }}
+spec:
+  replicas: {{ .Values.gateway.replicas }}
+  selector:
+    matchLabels:
+      app: {{ .Release.Name }}-gateway
+  template:
+    metadata:
+      labels:
+        app: {{ .Release.Name }}-gateway
+    spec:
+      containers:
+        - name: gateway
+          image: gpqueue-gateway:{{ .Values.image.tag }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          env:
+            - name: GATEWAY_PORT
+              value: {{ .Values.gateway.port | quote }}
+            - name: DB_DSN
+              valueFrom:
+                configMapKeyRef:
+                  name: {{ .Release.Name }}-config
+                  key: DB_DSN
+          ports:
+            - containerPort: {{ .Values.gateway.port }}
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: {{ .Values.gateway.port }}
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: {{ .Values.gateway.port }}
+            initialDelaySeconds: 5
+            periodSeconds: 5
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              memory: 128Mi

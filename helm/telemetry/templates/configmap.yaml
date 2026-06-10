@@ -8,3 +8,6 @@ metadata:
 data:
   TOPIC_NAME: {{ .Values.streamer.topicName | quote }}
   QUEUE_ADDR: "http://{{ .Release.Name }}-mq:{{ .Values.mq.port }}"
+  DB_DSN: {{ printf "postgres://%s:%s@%s-postgres:5432/%s?sslmode=disable" .Values.postgres.user .Values.postgres.password .Release.Name .Values.postgres.database | quote }}
+  CONSUMER_GROUP: {{ .Values.collector.consumerGroup | quote }}
+  DLQ_TOPIC: {{ .Values.collector.dlqTopic | quote }}
