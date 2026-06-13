@@ -13,7 +13,7 @@ DCGM telemetry from a CSV source is streamed through 1–10 Streamer instances i
 Message Queue. From there, 1–10 competing Collector instances consume messages, persist them to
 PostgreSQL + TimescaleDB, and the API Gateway exposes the data via REST.
 
-![GPU Queue Architecture](data/GPU-queue-architecture-updated.png)
+![GPU Queue Architecture](data/architecture.png)
 
 
 ### Components
