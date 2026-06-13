@@ -1,4 +1,4 @@
-.PHONY: build test lint tidy \
+.PHONY: build test lint tidy cover cover-html \
         minikube-build minikube-deploy minikube-undeploy \
         minikube-logs-mq minikube-logs-streamer minikube-logs-collector minikube-logs-gateway \
         minikube-port-forward minikube-port-forward-postgres minikube-open-gateway
@@ -8,6 +8,15 @@ build:
 
 test:
 	go test ./...
+
+# Run tests with coverage and print a per-package summary to the terminal.
+cover:
+	go test -coverprofile=coverage.out -covermode=atomic ./...
+	go tool cover -func=coverage.out
+
+# Open an HTML coverage report in the default browser.
+cover-html: cover
+	go tool cover -html=coverage.out
 
 lint:
 	go vet ./...
