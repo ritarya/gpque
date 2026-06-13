@@ -94,6 +94,18 @@ func (rb *RingBuffer) Read(fromOffset int64, limit int) []Entry {
 	return out
 }
 
+// Evict removes all entries with Offset < upToOffset from the front of the buffer,
+// freeing capacity for new appends. Call this after consumer groups commit so the
+// buffer does not fill permanently with already-consumed messages.
+func (rb *RingBuffer) Evict(upToOffset int64) {
+	rb.mu.Lock()
+	defer rb.mu.Unlock()
+	for rb.count > 0 && rb.buf[rb.start].Offset < upToOffset {
+		rb.start = (rb.start + 1) % rb.capacity
+		rb.count--
+	}
+}
+
 // NextOffset returns the offset that will be assigned to the next Append.
 func (rb *RingBuffer) NextOffset() int64 {
 	rb.mu.Lock()

@@ -1,3 +1,5 @@
+CREATE EXTENSION IF NOT EXISTS timescaledb;
+
 CREATE TABLE IF NOT EXISTS gpus (
     uuid        TEXT PRIMARY KEY,
     gpu_id      INT NOT NULL,

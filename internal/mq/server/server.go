@@ -70,6 +70,23 @@ func (t *mqTopic) getOrCreateGroup(groupID string, initOff int64) *groupState {
 	return g
 }
 
+// minCommittedOffset returns the minimum committed offset across all known consumer
+// groups for t, or -1 when no groups exist yet. Safe to call without holding any lock.
+func (t *mqTopic) minCommittedOffset() int64 {
+	t.groupsMu.Lock()
+	defer t.groupsMu.Unlock()
+	min := int64(-1)
+	for _, g := range t.groups {
+		g.mu.Lock()
+		c := g.committed
+		g.mu.Unlock()
+		if min == -1 || c < min {
+			min = c
+		}
+	}
+	return min
+}
+
 // New creates a Server, replays the WAL to restore ring buffers, and wires routes.
 func New(cfg Config) (*Server, error) {
 	w, err := wal.Open(cfg.WALPath)
@@ -206,6 +223,13 @@ func (s *Server) handleFetch(w http.ResponseWriter, r *http.Request) {
 	t := s.getOrCreateTopic(topicName)
 	g := t.getOrCreateGroup(groupID, s.offsets.Get(topicName, groupID))
 
+	// Evict any ring buffer entries that all known groups have already committed
+	// past. This is especially important after a restart where the WAL replay
+	// refills the buffer with already-consumed messages.
+	if min := t.minCommittedOffset(); min > 0 {
+		t.rb.Evict(min)
+	}
+
 	// tryRead atomically reads up to limit messages and advances dispatched.
 	// Holding g.mu across rb.Read prevents two concurrent consumers getting
 	// the same messages (competing-consumer delivery guarantee).
@@ -324,6 +348,12 @@ func (s *Server) handleCommit(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "failed to persist offset", http.StatusInternalServerError)
 		return
 	}
+
+	// Free ring buffer capacity for entries all groups have committed past.
+	if min := t.minCommittedOffset(); min > 0 {
+		t.rb.Evict(min)
+	}
+
 	w.WriteHeader(http.StatusNoContent)
 }
 
