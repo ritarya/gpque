@@ -3,6 +3,6 @@ bin/
 go.sum
 *.log
 *.offsets
-data/
+data/*.csv
 .env
 coverage.out
