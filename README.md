@@ -5,6 +5,26 @@ infrastructure. DCGM GPU metrics are ingested by one or more Streamers, routed t
 queue to competing Collectors that persist them, and then served to consumers via a REST API
 Gateway with auto-generated OpenAPI documentation.
 
+## Project Status
+
+> **Alpha — actively developed**
+
+| Area | Status |
+|---|---|
+| Message queue service | Complete |
+| Streamer (CSV source) | Complete |
+| Collector + storage | Complete |
+| REST API Gateway | Complete |
+| OpenAPI / Swagger UI | Complete |
+| Helm chart (Kubernetes) | Complete |
+| Docker images (multi-stage) | Complete |
+| WAL crash recovery | Complete |
+| Dead-letter queue | Complete |
+| HPA (consumer lag metric) | Defined in Helm, requires Prometheus adapter |
+| Additional streamer sources (gRPC, HTTP scrape, Kafka) | Planned |
+| API authentication | Planned |
+| mTLS between services | Planned |
+
 ---
 
 ## Description
@@ -36,25 +56,154 @@ PostgreSQL + TimescaleDB, and the API Gateway exposes the data via REST.
 
 ---
 
-## Project Status
+## Design Considerations
 
-> **Alpha — actively developed**
+### Ring buffer + WAL
 
-| Area | Status |
+The queue stores messages in an **in-memory ring buffer** per topic. A ring buffer gives O(1)
+append and read with a fixed, predictable memory footprint controlled by `HIGH_WATER_MARK`.
+
+Durability is provided by a **write-ahead log (WAL)**: every publish is appended to a
+sequential log file before the in-memory buffer is updated. On startup the server replays the
+WAL to rebuild the ring buffer, so no messages are lost across pod restarts. The WAL file is
+stored on a `PersistentVolumeClaim` in Kubernetes for exactly this reason.
+
+Consumer group offsets are kept in a separate JSON file, also on the PVC, and fsynced on
+every `POST /commit`. This decouples offset durability from message durability and keeps the
+WAL append path fast.
+
+---
+
+### Consumer group model
+
+Two distinct delivery semantics are supported simultaneously:
+
+| Semantics | Mechanism |
 |---|---|
-| Message queue service | Complete |
-| Streamer (CSV source) | Complete |
-| Collector + storage | Complete |
-| REST API Gateway | Complete |
-| OpenAPI / Swagger UI | Complete |
-| Helm chart (Kubernetes) | Complete |
-| Docker images (multi-stage) | Complete |
-| WAL crash recovery | Complete |
-| Dead-letter queue | Complete |
-| HPA (consumer lag metric) | Defined in Helm, requires Prometheus adapter |
-| Additional streamer sources (gRPC, HTTP scrape, Kafka) | Planned |
-| API authentication | Planned |
-| mTLS between services | Planned |
+| **Competing consumers** (load balancing) | Multiple consumers share a `group_id`; the queue tracks the per-group read cursor and advances it when any consumer fetches, so each message is delivered to exactly one instance in the group. |
+| **Independent groups** (fan-out / broadcast) | Each group has its own offset; a second group starts reading from offset 0 and receives every message independently. |
+
+This mirrors Kafka's consumer group model but implemented with a simple in-memory offset map,
+which is sufficient for the fixed scale (≤10 consumers per group).
+
+---
+
+### At-least-once delivery
+
+Collectors commit an offset (`POST /topics/{topic}/commit`) **only after** successfully
+persisting the record to PostgreSQL. If the collector crashes before committing, the offset
+is not advanced and the message will be redelivered on the next fetch — giving at-least-once
+semantics.
+
+Exactly-once would require distributed transactions between the queue and the database.
+At-least-once is safe here because `INSERT ... ON CONFLICT (id) DO NOTHING` makes
+`InsertTelemetry` idempotent: reprocessing the same record is a no-op.
+
+---
+
+### Dead-letter queue (DLQ)
+
+When a message is nacked more than `MAX_RETRIES` times the queue automatically moves it to a
+`<topic>-dlq` topic (`telemetry-dlq` by default). This prevents a single poison message from
+blocking the consumer forever. The DLQ is itself a first-class topic and can be inspected or
+replayed by any consumer group without special tooling.
+
+---
+
+### Backpressure
+
+When the ring buffer depth reaches `HIGH_WATER_MARK` the queue rejects new publish requests
+with `HTTP 429 Too Many Requests`. Producers (streamers) observe this and can back off or
+shed load. This keeps memory usage bounded and makes the system's capacity limits explicit and
+observable rather than silently degrading.
+
+---
+
+### HTTP/1.1 + JSON wire protocol
+
+The queue exposes a plain REST + JSON API over HTTP/1.1. This was chosen over gRPC or a
+binary protocol because:
+
+- **No code-gen required** — any `curl` command or standard `http.Client` can talk to it.
+- **Debuggability** — every request and response is human-readable in logs.
+- **Long-poll fetch** — HTTP/1.1 long-polling is sufficient for the ≤10 consumers per group
+  target; we do not need HTTP/2 server push or WebSocket streams at this scale.
+
+The payload field is base64-encoded to allow arbitrary binary content while keeping the
+envelope JSON-safe.
+
+---
+
+### Storage — PostgreSQL + TimescaleDB
+
+PostgreSQL was chosen for its rich SQL support and strong transactional guarantees. The
+TimescaleDB extension converts the `telemetry` table into a **hypertable** partitioned
+automatically by `processed_at`. This gives:
+
+- **Query performance** — range queries over time windows (the most common API access pattern)
+  hit a single partition rather than scanning the full table.
+- **Compression** — TimescaleDB's columnar compression can reduce telemetry storage by 90%+
+  once data ages past the active partition.
+- **Familiar SQL** — no new query language; existing PostgreSQL tooling (pg_dump, psql,
+  monitoring) works unchanged.
+
+The `gpu_uuid` + `processed_at DESC` index on the telemetry table satisfies the most frequent
+query shape (`GET /api/v1/gpus/{id}/telemetry`) without a full table scan.
+
+---
+
+### Cursor-based pagination
+
+The telemetry endpoint uses **opaque cursors** (`next_cursor`) rather than `OFFSET/LIMIT`.
+Offset-based pagination on time-series data is fragile: new rows inserted while the client is
+paginating shift later pages. Cursor-based pagination encodes the (`processed_at`, `id`) of
+the last returned row and uses a keyset condition on the next query, ensuring stable,
+consistent pages regardless of concurrent inserts.
+
+The cursor is base64-encoded JSON, keeping the wire format opaque so the encoding can evolve
+without breaking API clients.
+
+---
+
+### API framework — huma + chi
+
+`huma` was chosen over `net/http` + `gorilla/mux` or `gin` because it generates a valid
+**OpenAPI 3.x specification from Go struct annotations at runtime** — no hand-authored YAML,
+no separate code-gen step. The spec and Swagger UI are available at `/openapi.json` and
+`/docs` immediately, making the API self-documenting and testable without additional tooling.
+
+`chi` provides the underlying router and is compatible with standard `net/http` middleware.
+
+---
+
+### Kubernetes deployment strategy
+
+| Concern | Decision |
+|---|---|
+| **Message queue** | `Deployment` with `replicas: 1`; stateful WAL + offsets stored on a PVC so the pod can be rescheduled without data loss. |
+| **Streamer** | Stateless `Deployment`; scales 1–10 via `kubectl scale` or HPA on CPU. |
+| **Collector** | Stateless `Deployment`; scales 1–10 via HPA keyed on the `telemetry_consumer_lag` metric exported by the queue's `/metrics` endpoint. |
+| **API Gateway** | Stateless `Deployment`; scales on CPU / request rate. |
+| **PostgreSQL** | Single-pod `StatefulSet` with a PVC; sufficient for the exercise scope. |
+
+All inter-service traffic is over `ClusterIP` services and never leaves the cluster. No TLS
+is configured internally (see Future Scope).
+
+---
+
+### Testing strategy
+
+The test suite is structured in three layers:
+
+| Layer | Location | Tooling |
+|---|---|---|
+| **Unit tests** | `internal/*/` | Standard `testing` package; HTTP handlers tested with `httptest.Server`; DB methods tested with `go-sqlmock` (no real database required) |
+| **Integration-style tests** | `internal/mq/server/` | Real in-process MQ server with temp-directory WAL; covers publish, fetch, commit, nack, DLQ, WAL replay, and Prometheus metrics end-to-end |
+| **Config / helper tests** | `cmd/*/` | Tests for `loadConfig`, `getenv`, `getenvInt`, and `persist` in each binary |
+
+The `storage.Repository` interface lets API handler tests inject a mock repository without a
+running database. The `source.Source` interface similarly decouples streamer logic from the
+CSV file for unit testing.
 
 ---
 
